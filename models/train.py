@@ -1,118 +1,133 @@
+"""
+train.py
+
+Replaces the MLRan-based pipeline. MLRan gives one aggregated feature row
+per whole sample with no timestamp axis or PID-level time series, so it
+cannot be sliced into (PID, 500ms-window) sequences -- there is nothing to
+slide a window over. This script instead:
+
+  1. Loads data/telemetry.csv (from generate_telemetry.py) -- real time
+     series, one row per (pid, window), correctly ordered and labeled.
+  2. Builds (B, T=6, F) sequences strictly within each PID/run
+     (sequence_builder.py).
+  3. Splits train/test by RUN, not by row, so no process's windows leak
+     across the split.
+  4. Fits normalization on TRAIN ONLY, saves the stats to disk so Person 2's
+     live feature pipeline and Person 3's daemon apply the exact same
+     transform at inference time.
+  5. Trains RansomwareLSTM, evaluates accuracy / precision / recall / F1 /
+     confusion matrix (class-wise, since this is an imbalanced detection
+     problem where ransomware-window recall is the number that matters).
+  6. Exports model.onnx for onnxruntime, plus a feature_spec.json describing
+     input contract (feature order, T, normalization stats) for Person 2/3.
+"""
+
 import os
+import json
+
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import pandas as pd
-import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix
 from torch.utils.data import DataLoader, TensorDataset
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    confusion_matrix, classification_report,
+)
+
 from lstm_net import RansomwareLSTM
+from sequence_builder import build_sequences, grouped_train_test_split
+from generate_telemetry import FEATURE_COLUMNS
 
-def load_and_preprocess_mlran(data_dir: str, seq_len: int = 6):
-    x_train_path = os.path.join(data_dir, "MLRan_X_train_RFE.csv")
-    x_test_path = os.path.join(data_dir, "MLRan_X_test_RFE.csv")
+SEQ_LEN = 6
+BATCH_SIZE = 64
+EPOCHS = 25
+LEARNING_RATE = 1e-3
+HIDDEN_DIM = 32
+NUM_LAYERS = 1
+TEST_SIZE = 0.25
+SEED = 42
 
-    if not os.path.exists(x_train_path) or not os.path.exists(x_test_path):
-        raise FileNotFoundError(f"Missing CSV files in {data_dir}.")
+BASE_DIR = os.path.dirname(__file__)
+DATA_PATH = os.path.join(BASE_DIR, "data", "telemetry.csv")
+OUTPUT_DIR = os.path.join(BASE_DIR, "saved_models")
 
-    print("Loading MLRan CSV files...")
-    train_df = pd.read_csv(x_train_path)
-    test_df = pd.read_csv(x_test_path)
 
-    # 1. Extract target ground truth 'sample_type' (0 = Goodware, 1 = Ransomware)
-    if 'sample_type' in train_df.columns:
-        y_train = train_df['sample_type'].values
-        y_test = test_df['sample_type'].values
-    else:
-        # Fallback if target column is in MLRan_labels.csv
-        labels_path = os.path.join(data_dir, "MLRan_labels.csv")
-        labels_df = pd.read_csv(labels_path)
-        y_train = labels_df['sample_type'].iloc[:len(train_df)].values
-        y_test = labels_df['sample_type'].iloc[len(train_df):len(train_df) + len(test_df)].values
+def load_data(path: str) -> pd.DataFrame:
+    if not os.path.exists(path):
+        raise FileNotFoundError(
+            f"{path} not found. Run generate_telemetry.py first to create it."
+        )
+    return pd.read_csv(path)
 
-    # 2. Drop all non-feature metadata & class label columns
-    metadata_cols = ['sample_id', 'sample_type', 'family_label', 'type_label']
-    train_df = train_df.drop(columns=[c for c in metadata_cols if c in train_df.columns], errors='ignore')
-    test_df = test_df.drop(columns=[c for c in metadata_cols if c in test_df.columns], errors='ignore')
 
-    # Remove any lingering non-numeric columns
-    non_num = train_df.select_dtypes(exclude=[np.number]).columns
-    if len(non_num) > 0:
-        train_df = train_df.drop(columns=non_num)
-        test_df = test_df.drop(columns=non_num)
+def normalize(X_train: np.ndarray, X_test: np.ndarray):
+    """Standardize per-feature using TRAIN stats only. X is (N, T, F);
+    we compute mean/std over the (N, T) axes for each feature."""
+    flat_train = X_train.reshape(-1, X_train.shape[-1])
+    mean = flat_train.mean(axis=0)
+    std = flat_train.std(axis=0)
+    std[std == 0] = 1.0  # avoid divide-by-zero on constant features
 
-    # Force binary targets strictly to float32 (0.0 or 1.0)
-    y_train = np.where(y_train > 0, 1.0, 0.0).astype(np.float32)
-    y_test = np.where(y_test > 0, 1.0, 0.0).astype(np.float32)
+    X_train_norm = (X_train - mean) / std
+    X_test_norm = (X_test - mean) / std
+    return X_train_norm.astype(np.float32), X_test_norm.astype(np.float32), mean, std
 
-    X_train_raw = train_df.values
-    X_test_raw = test_df.values
 
-    # 3. Scale numerical feature vectors
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train_raw)
-    X_test_scaled = scaler.transform(X_test_raw)
+def train_pipeline():
+    torch.manual_seed(SEED)
+    np.random.seed(SEED)
 
-    num_features = X_train_scaled.shape[1]
-    print(f"Extracted {num_features} dynamic feature indicators for training.")
+    print("--- Loading telemetry ---")
+    df = load_data(DATA_PATH)
+    print(f"Loaded {len(df)} rows across {df['run_id'].nunique()} runs.")
 
-    # 4. Construct sequential time windows for PyTorch LSTM
-    def create_sequences(X_data, y_data):
-        sequences, labels = [], []
-        for i in range(len(X_data) - seq_len + 1):
-            sequences.append(X_data[i : i + seq_len])
-            labels.append(y_data[i + seq_len - 1])
-        return np.array(sequences, dtype=np.float32), np.array(labels, dtype=np.float32).reshape(-1, 1)
+    print("\n--- Building sequences (grouped by PID/run, chronological) ---")
+    X, y, groups = build_sequences(df, FEATURE_COLUMNS, seq_len=SEQ_LEN, stride=1)
+    print(f"Built {len(X)} sequences of shape (T={SEQ_LEN}, F={X.shape[-1]})")
 
-    X_train_seq, y_train_seq = create_sequences(X_train_scaled, y_train)
-    X_test_seq, y_test_seq = create_sequences(X_test_scaled, y_test)
+    print("\n--- Splitting train/test by RUN (no PID leakage) ---")
+    X_train, y_train, X_test, y_test = grouped_train_test_split(
+        X, y, groups, test_size=TEST_SIZE, seed=SEED
+    )
+    print(f"Train sequences: {len(X_train)}  ({y_train.mean():.3f} positive rate)")
+    print(f"Test sequences : {len(X_test)}  ({y_test.mean():.3f} positive rate)")
 
-    return (
-        torch.tensor(X_train_seq), torch.tensor(y_train_seq),
-        torch.tensor(X_test_seq), torch.tensor(y_test_seq),
-        num_features
+    print("\n--- Normalizing (fit on train only) ---")
+    X_train, X_test, mean, std = normalize(X_train, X_test)
+
+    train_loader = DataLoader(
+        TensorDataset(torch.tensor(X_train), torch.tensor(y_train)),
+        batch_size=BATCH_SIZE, shuffle=True,
     )
 
-def train_mlran_pipeline():
-    seq_len = 6
-    batch_size = 64
-    epochs = 15
-    learning_rate = 0.001
-
-    data_dir = os.path.join(os.path.dirname(__file__), "..", "data")
-
-    # Load preprocessed tensors
-    X_train, y_train, X_test, y_test, num_features = load_and_preprocess_mlran(data_dir, seq_len=seq_len)
-    train_loader = DataLoader(TensorDataset(X_train, y_train), batch_size=batch_size, shuffle=True)
-
-    # Initialize PyTorch LSTM model
-    model = RansomwareLSTM(num_features=num_features, hidden_dim=64, num_layers=1)
+    num_features = X_train.shape[-1]
+    model = RansomwareLSTM(num_features=num_features, hidden_dim=HIDDEN_DIM, num_layers=NUM_LAYERS)
     criterion = nn.BCELoss()
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
 
-    print("\n--- Starting Training Loop ---")
+    print("\n--- Training ---")
     model.train()
-    for epoch in range(1, epochs + 1):
+    for epoch in range(1, EPOCHS + 1):
         running_loss = 0.0
         for batch_X, batch_y in train_loader:
             optimizer.zero_grad()
-            predictions = model(batch_X)
-            loss = criterion(predictions, batch_y)
+            preds = model(batch_X)
+            loss = criterion(preds, batch_y)
             loss.backward()
             optimizer.step()
             running_loss += loss.item()
-
         avg_loss = running_loss / len(train_loader)
-        print(f"Epoch [{epoch}/{epochs}] - Loss: {avg_loss:.4f}")
+        if epoch % 5 == 0 or epoch == 1:
+            print(f"Epoch [{epoch:2d}/{EPOCHS}] - Loss: {avg_loss:.4f}")
 
-    # Evaluate classification metrics
-    print("\n--- Model Evaluation ---")
+    print("\n--- Evaluation (held-out runs, never seen in training) ---")
     model.eval()
     with torch.no_grad():
-        raw_preds = model(X_test)
-        binary_preds = (raw_preds >= 0.5).float().numpy()
-        y_true = y_test.numpy()
+        raw_preds = model(torch.tensor(X_test)).numpy()
+    binary_preds = (raw_preds >= 0.5).astype(np.float32)
+    y_true = y_test
 
     acc = accuracy_score(y_true, binary_preds)
     prec = precision_score(y_true, binary_preds, zero_division=0)
@@ -122,26 +137,57 @@ def train_mlran_pipeline():
 
     print(f"Accuracy : {acc * 100:.2f}%")
     print(f"Precision: {prec * 100:.2f}%")
-    print(f"Recall   : {rec * 100:.2f}%")
+    print(f"Recall   : {rec * 100:.2f}%   <-- ransomware-window detection rate")
     print(f"F1-Score : {f1:.4f}")
     print("\nConfusion Matrix:")
-    print(f"True Negatives: {cm[0][0]} | False Positives: {cm[0][1]}")
-    print(f"False Negatives: {cm[1][0]} | True Positives: {cm[1][1]}")
+    print(f"                Pred Benign   Pred Ransomware")
+    print(f"True Benign     {cm[0][0]:>10d}   {cm[0][1]:>15d}")
+    print(f"True Ransomware {cm[1][0]:>10d}   {cm[1][1]:>15d}")
+    print("\nClassification report:")
+    print(classification_report(y_true, binary_preds, target_names=["benign", "ransomware"], zero_division=0))
 
-    # Export ONNX model
-    output_dir = os.path.join(os.path.dirname(__file__), "saved_models")
-    os.makedirs(output_dir, exist_ok=True)
-    onnx_path = os.path.join(output_dir, "model.onnx")
+    os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    dummy_input = torch.randn(1, seq_len, num_features)
+    # Save PyTorch weights too, useful for retraining/fine-tuning later
+    torch.save(model.state_dict(), os.path.join(OUTPUT_DIR, "model_state.pt"))
+
+    # Export ONNX for Person 3's onnxruntime daemon
+    onnx_path = os.path.join(OUTPUT_DIR, "model.onnx")
+    dummy_input = torch.randn(1, SEQ_LEN, num_features)
     torch.onnx.export(
         model, dummy_input, onnx_path,
-        export_params=True, opset_version=14,
+        export_params=True, opset_version=17,
         do_constant_folding=True,
-        input_names=['telemetry_sequence'], output_names=['risk_score'],
-        dynamic_axes={'telemetry_sequence': {0: 'batch_size'}, 'risk_score': {0: 'batch_size'}}
+        input_names=["telemetry_sequence"], output_names=["risk_score"],
+        dynamic_axes={"telemetry_sequence": {0: "batch_size"}, "risk_score": {0: "batch_size"}},
     )
-    print(f"\nModel saved successfully to:\n{onnx_path}")
+    print(f"\nSaved PyTorch weights -> {os.path.join(OUTPUT_DIR, 'model_state.pt')}")
+    print(f"Exported ONNX model  -> {onnx_path}")
+
+    # Save the exact interface contract Person 2 and Person 3 need
+    feature_spec = {
+        "feature_order": FEATURE_COLUMNS,
+        "sequence_length": SEQ_LEN,
+        "window_ms": 500,
+        "normalization": {
+            "method": "standard",
+            "mean": mean.tolist(),
+            "std": std.tolist(),
+        },
+        "decision_threshold": 0.85,
+        "sustained_windows_required": 2,
+        "notes": (
+            "Apply (x - mean) / std per feature, in this exact order, to each "
+            "500ms window BEFORE stacking into a (1, 6, F) sequence for "
+            "onnxruntime inference. Sequences must never mix windows from "
+            "different PIDs."
+        ),
+    }
+    spec_path = os.path.join(OUTPUT_DIR, "feature_spec.json")
+    with open(spec_path, "w") as f:
+        json.dump(feature_spec, f, indent=2)
+    print(f"Saved interface spec  -> {spec_path}")
+
 
 if __name__ == "__main__":
-    train_mlran_pipeline()
+    train_pipeline()
