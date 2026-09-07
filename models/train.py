@@ -1,28 +1,33 @@
 """
-train.py
+models/train.py
 
-Replaces the MLRan-based pipeline. MLRan gives one aggregated feature row
-per whole sample with no timestamp axis or PID-level time series, so it
-cannot be sliced into (PID, 500ms-window) sequences -- there is nothing to
-slide a window over. This script instead:
+Same training pipeline as before -- only the imports and file paths
+changed to match the new package layout:
 
-  1. Loads data/telemetry.csv (from generate_telemetry.py) -- real time
-     series, one row per (pid, window), correctly ordered and labeled.
-  2. Builds (B, T=6, F) sequences strictly within each PID/run
-     (sequence_builder.py).
-  3. Splits train/test by RUN, not by row, so no process's windows leak
-     across the split.
-  4. Fits normalization on TRAIN ONLY, saves the stats to disk so Person 2's
-     live feature pipeline and Person 3's daemon apply the exact same
-     transform at inference time.
-  5. Trains RansomwareLSTM, evaluates accuracy / precision / recall / F1 /
-     confusion matrix (class-wise, since this is an imbalanced detection
-     problem where ransomware-window recall is the number that matters).
-  6. Exports model.onnx for onnxruntime, plus a feature_spec.json describing
-     input contract (feature order, T, normalization stats) for Person 2/3.
+    project_root/
+      models/
+        lstm_net.py
+        train.py          <- this file
+      src/
+        data_pipeline/
+          generate_telemetry.py
+          sequence_builder.py
+      tests/
+        test_model_lstm.py
+      data/                <- generated telemetry lands here
+      saved_models/        <- trained model + spec land here
+
+Run from the project root as a module, NOT as a plain script, so the
+package imports resolve correctly:
+
+    python -m models.train
+
+(Running `python models/train.py` directly will fail with an import
+error, since Python won't know where the `src` package is without the
+project root being treated as the top-level package context.)
 """
-
-import os
+import sys, os
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import json
 
 import numpy as np
@@ -36,9 +41,9 @@ from sklearn.metrics import (
     confusion_matrix, classification_report,
 )
 
-from lstm_net import RansomwareLSTM
-from sequence_builder import build_sequences, grouped_train_test_split
-from generate_telemetry import FEATURE_COLUMNS
+from models.lstm_net import RansomwareLSTM
+from src.data_pipeline.sequence_builder import build_sequences, grouped_train_test_split
+from src.data_pipeline.generate_telemetry import FEATURE_COLUMNS
 
 SEQ_LEN = 6
 BATCH_SIZE = 64
@@ -49,15 +54,17 @@ NUM_LAYERS = 1
 TEST_SIZE = 0.25
 SEED = 42
 
-BASE_DIR = os.path.dirname(__file__)
-DATA_PATH = os.path.join(BASE_DIR, "data", "telemetry.csv")
-OUTPUT_DIR = os.path.join(BASE_DIR, "saved_models")
+# This file now lives at <project_root>/models/train.py, so go up ONE
+# level to reach the project root, then down into data/ and saved_models/.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  
+DATA_PATH = os.path.join(PROJECT_ROOT, "data", "telemetry.csv")
+OUTPUT_DIR = os.path.join(PROJECT_ROOT, "saved_models")
 
 
 def load_data(path: str) -> pd.DataFrame:
     if not os.path.exists(path):
         raise FileNotFoundError(
-            f"{path} not found. Run generate_telemetry.py first to create it."
+            f"{path} not found. Run `python -m src.data_pipeline.generate_telemetry` first to create it."
         )
     return pd.read_csv(path)
 
