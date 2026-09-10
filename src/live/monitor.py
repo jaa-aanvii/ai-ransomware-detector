@@ -8,10 +8,21 @@ sys.path.append(
 )
 
 from src.data_pipeline.window_engine import SlidingWindowEngine
-from src.data_pipeline.scaler import FeatureScaler
 from src.live.pid_tracker import PIDTracker
 from src.live.event_collector import DatasetEventCollector
 from src.training.inference import RansomwareInference
+
+
+FEATURE_NAMES = [
+    "Write Rate",
+    "Rename Rate",
+    "Unique Directories",
+    "Files Modified",
+    "Entropy",
+    "Directory Dispersion",
+    "Process CPU %",
+    "Handle Count"
+]
 
 
 class RansomwareMonitor:
@@ -35,19 +46,109 @@ class RansomwareMonitor:
             window_size_ms=500
         )
 
-        self.scaler = FeatureScaler()
-
-        self.scaler.load(
-            scaler_path
-        )
-
         self.inference = RansomwareInference(
-            model_path
+            model_path=model_path,
+            scaler_path=scaler_path
         )
+
+    # --------------------------------------------------------
+    # DISPLAY HEADER
+    # --------------------------------------------------------
+
+    def print_header(self):
+
+        print("\n")
+        print("=" * 62)
+        print("           AI RANSOMWARE BEHAVIOR DETECTOR")
+        print("=" * 62)
+        print(" Model      : Fine-tuned 2-Layer LSTM")
+        print(" Features   : 8 behavioral features")
+        print(" Sequence   : 6 windows × 500 ms")
+        print(" Detection  : Behavioral anomaly classification")
+        print("=" * 62)
+        print()
+
+    # --------------------------------------------------------
+    # DISPLAY RESULT
+    # --------------------------------------------------------
+
+    def print_result(
+        self,
+        pid,
+        timestamp,
+        sequence,
+        prediction,
+        actual_label
+    ):
+
+        risk = prediction["probability"]
+        label = prediction["label"]
+
+        print("-" * 62)
+
+        print(
+            f"PID          : {pid}"
+        )
+
+        print(
+            f"Time         : {timestamp:.2f}s"
+        )
+
+        print(
+            f"Risk Score   : {risk * 100:.2f}%"
+        )
+
+        print(
+            f"Prediction   : {label}"
+        )
+
+        print(
+            f"Actual Label : "
+            f"{'RANSOMWARE' if actual_label == 1 else 'BENIGN'}"
+        )
+
+        print()
+
+        print("Behavioral Features:")
+
+        latest_window = sequence[-1]
+
+        for name, value in zip(
+            FEATURE_NAMES,
+            latest_window
+        ):
+
+            print(
+                f"  {name:<24}: {value:.4f}"
+            )
+
+        if label == "RANSOMWARE":
+
+            print()
+            print(
+                "⚠ ALERT: RANSOMWARE BEHAVIOR DETECTED"
+            )
+
+        else:
+
+            print()
+            print(
+                "✓ Status: PROCESS APPEARS BENIGN"
+            )
+
+        print("-" * 62)
+
+    # --------------------------------------------------------
+    # MAIN MONITOR
+    # --------------------------------------------------------
 
     def run(self):
 
-        print("Starting ransomware monitor...\n")
+        self.print_header()
+
+        print(
+            "Starting behavioral telemetry replay...\n"
+        )
 
         for event in self.collector.events():
 
@@ -58,15 +159,10 @@ class RansomwareMonitor:
                 event["timestamp"]
             )
 
-            # Normalize the current window
-            scaled_features = self.scaler.transform(
-                [event["features"]]
-            )[0]
-
             result = self.window_engine.add_window(
                 pid=pid,
                 timestamp=event["timestamp"],
-                features=scaled_features,
+                features=event["features"],
                 label=event["label"]
             )
 
@@ -79,10 +175,37 @@ class RansomwareMonitor:
                 sequence
             )
 
-            print(
-                f"PID={pid} "
-                f"time={event['timestamp']:.2f}s "
-                f"risk={prediction['probability']:.3f} "
-                f"prediction={prediction['label']} "
-                f"actual={actual_label}"
+            self.print_result(
+                pid=pid,
+                timestamp=event["timestamp"],
+                sequence=sequence,
+                prediction=prediction,
+                actual_label=actual_label
             )
+
+
+# ============================================================
+# ENTRY POINT
+# ============================================================
+
+if __name__ == "__main__":
+
+    DATASET_PATH = (
+        "data/test_sample_concise.xlsx"
+    )
+
+    MODEL_PATH = (
+        "models/proper_finetuned_lstm.pth"
+    )
+
+    SCALER_PATH = (
+        "models/proper_scaler.pkl"
+    )
+
+    monitor = RansomwareMonitor(
+        dataset_path=DATASET_PATH,
+        model_path=MODEL_PATH,
+        scaler_path=SCALER_PATH
+    )
+
+    monitor.run()
