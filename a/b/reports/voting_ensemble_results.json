@@ -1,0 +1,98 @@
+{
+  "pca_features": 1,
+  "seed": 42,
+  "best_params": {
+    "lr": {
+      "C": 5.141096648805748,
+      "penalty": "l2",
+      "class_weight": null
+    },
+    "rf": {
+      "n_estimators": 216,
+      "max_depth": 11,
+      "min_samples_split": 13,
+      "min_samples_leaf": 2,
+      "max_features": null,
+      "class_weight": null
+    },
+    "mlp": {
+      "n_layers": 1,
+      "n_units_l0": 62,
+      "activation": "tanh",
+      "alpha": 0.0010416943117544195,
+      "learning_rate_init": 0.0004983336320171078
+    }
+  },
+  "results": [
+    {
+      "Model": "Logistic Regression (Optuna)",
+      "CV macro-F1": 0.9985,
+      "Accuracy (%)": 98.05,
+      "Precision (%)": 97.65,
+      "Recall (%)": 98.28,
+      "F1": 0.9796,
+      "ROC-AUC": 0.9968,
+      "PR-AUC": 0.996,
+      "TN": 499,
+      "FP": 11,
+      "FN": 8,
+      "TP": 457
+    },
+    {
+      "Model": "Random Forest (Optuna)",
+      "CV macro-F1": 0.9985,
+      "Accuracy (%)": 98.15,
+      "Precision (%)": 97.65,
+      "Recall (%)": 98.49,
+      "F1": 0.9807,
+      "ROC-AUC": 0.9843,
+      "PR-AUC": 0.9727,
+      "TN": 499,
+      "FP": 11,
+      "FN": 7,
+      "TP": 458
+    },
+    {
+      "Model": "MLP (Optuna)",
+      "CV macro-F1": 0.9985,
+      "Accuracy (%)": 98.05,
+      "Precision (%)": 97.65,
+      "Recall (%)": 98.28,
+      "F1": 0.9796,
+      "ROC-AUC": 0.9888,
+      "PR-AUC": 0.9693,
+      "TN": 499,
+      "FP": 11,
+      "FN": 8,
+      "TP": 457
+    },
+    {
+      "Model": "Voting Ensemble (hard)",
+      "CV macro-F1": 0.9987,
+      "Accuracy (%)": 98.05,
+      "Precision (%)": 97.65,
+      "Recall (%)": 98.28,
+      "F1": 0.9796,
+      "ROC-AUC": null,
+      "PR-AUC": null,
+      "TN": 499,
+      "FP": 11,
+      "FN": 8,
+      "TP": 457
+    },
+    {
+      "Model": "Voting Ensemble (soft)",
+      "CV macro-F1": 0.9987,
+      "Accuracy (%)": 98.05,
+      "Precision (%)": 97.65,
+      "Recall (%)": 98.28,
+      "F1": 0.9796,
+      "ROC-AUC": 0.9903,
+      "PR-AUC": 0.9715,
+      "TN": 499,
+      "FP": 11,
+      "FN": 8,
+      "TP": 457
+    }
+  ]
+}
