@@ -1,0 +1,78 @@
+{
+  "seed": 42,
+  "pca_variance": 0.95,
+  "raw_pca_components": 195,
+  "trirec_features": 1,
+  "results": [
+    {
+      "Model": "Logistic Regression",
+      "CV macro-F1": 0.9956,
+      "Accuracy (%)": 97.95,
+      "Precision (%)": 97.04,
+      "Recall (%)": 98.71,
+      "F1": 0.9787,
+      "ROC-AUC": 0.9958,
+      "PR-AUC": 0.9938,
+      "TN": 496,
+      "FP": 14,
+      "FN": 6,
+      "TP": 459
+    },
+    {
+      "Model": "Random Forest",
+      "CV macro-F1": 0.9982,
+      "Accuracy (%)": 98.05,
+      "Precision (%)": 97.65,
+      "Recall (%)": 98.28,
+      "F1": 0.9796,
+      "ROC-AUC": 0.9966,
+      "PR-AUC": 0.9961,
+      "TN": 499,
+      "FP": 11,
+      "FN": 8,
+      "TP": 457
+    },
+    {
+      "Model": "MLP",
+      "CV macro-F1": 0.9872,
+      "Accuracy (%)": 97.85,
+      "Precision (%)": 97.23,
+      "Recall (%)": 98.28,
+      "F1": 0.9775,
+      "ROC-AUC": 0.9966,
+      "PR-AUC": 0.9959,
+      "TN": 497,
+      "FP": 13,
+      "FN": 8,
+      "TP": 457
+    },
+    {
+      "Model": "Voting Ensemble (hard)",
+      "CV macro-F1": 0.9959,
+      "Accuracy (%)": 98.15,
+      "Precision (%)": 97.45,
+      "Recall (%)": 98.71,
+      "F1": 0.9808,
+      "ROC-AUC": null,
+      "PR-AUC": null,
+      "TN": 498,
+      "FP": 12,
+      "FN": 6,
+      "TP": 459
+    },
+    {
+      "Model": "Voting Ensemble (soft)",
+      "CV macro-F1": 0.9961,
+      "Accuracy (%)": 98.15,
+      "Precision (%)": 97.45,
+      "Recall (%)": 98.71,
+      "F1": 0.9808,
+      "ROC-AUC": 0.9975,
+      "PR-AUC": 0.9971,
+      "TN": 498,
+      "FP": 12,
+      "FN": 6,
+      "TP": 459
+    }
+  ]
+}
