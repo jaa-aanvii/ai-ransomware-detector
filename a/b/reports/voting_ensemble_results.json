@@ -19,7 +19,7 @@
       "n_layers": 1,
       "n_units_l0": 62,
       "activation": "tanh",
-      "alpha": 0.0010416943117544195,
+      "alpha": 0.0010416943117544204,
       "learning_rate_init": 0.0004983336320171078
     }
   },

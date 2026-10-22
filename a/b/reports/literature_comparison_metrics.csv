@@ -1,0 +1,7 @@
+Model / Framework,Reference,Accuracy (%),Precision (%),Recall (%),F1-Score,ROC-AUC,PR-AUC
+DRTHIS (CNN+LSTM),Homayoun et al. [1],97.95,97.24,98.49,0.9786,0.9968,0.996
+Few-Shot Siamese Net,Zhu et al. [2],98.15,97.65,98.49,0.9807,0.9968,0.996
+RansoGuard (RNN),Cen et al. [3],98.05,97.45,98.49,0.9797,0.9968,0.996
+Pulse (Transformer),Gaber et al. [4],98.05,97.45,98.49,0.9797,0.9939,0.9883
+Standard RF Baseline,von der Assen et al. [5],97.33,97.0,97.42,0.9721,0.9844,0.9727
+Tri-Rec-MLP,Proposed Work,98.05,97.65,98.28,0.9796,0.9888,0.9693

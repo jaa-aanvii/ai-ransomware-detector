@@ -1,0 +1,40 @@
+{
+  "feature_order": [
+    "write_rate",
+    "rename_rate",
+    "unique_dirs",
+    "files_modified",
+    "entropy",
+    "dir_dispersion",
+    "proc_cpu_pct",
+    "handle_count"
+  ],
+  "sequence_length": 6,
+  "window_ms": 500,
+  "normalization": {
+    "method": "standard",
+    "mean": [
+      19.815271377563477,
+      9.927788734436035,
+      4.02477502822876,
+      16.527063369750977,
+      4.852604389190674,
+      0.2820972204208374,
+      30.804983139038086,
+      30.550294876098633
+    ],
+    "std": [
+      25.519105911254883,
+      16.64552879333496,
+      4.624350547790527,
+      22.839216232299805,
+      2.2547037601470947,
+      0.28291937708854675,
+      24.48296356201172,
+      24.206668853759766
+    ]
+  },
+  "decision_threshold": 0.85,
+  "sustained_windows_required": 2,
+  "notes": "Apply (x - mean) / std per feature, in this exact order, to each 500ms window BEFORE stacking into a (1, 6, F) sequence for onnxruntime inference. Sequences must never mix windows from different PIDs."
+}
